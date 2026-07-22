@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Lyrica",
+  "version": "0.1.0",
+  "identifier": "com.lyrica.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "Lyrica Overlay",
+        "url": "index.html",
+        "width": 520,
+        "height": 220,
+        "minWidth": 260,
+        "minHeight": 90,
+        "maxWidth": 1920,
+        "maxHeight": 1080,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": true,
+        "visible": true,
+        "focus": false,
+        "x": 100,
+        "y": 100
+      },
+      {
+        "label": "settings",
+        "title": "Lyrica — Settings",
+        "url": "index.html#/settings",
+        "width": 640,
+        "height": 720,
+        "minWidth": 580,
+        "minHeight": 600,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "shadow": true,
+        "resizable": false,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
