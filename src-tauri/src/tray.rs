@@ -10,7 +10,7 @@ use tauri::{
 
 use crate::state::AppState;
 
-/// Generate a clean 32x32 RGBA icon for the system tray (Cyan brand color).
+/// Generate a clean 32x32 RGBA icon for fallback if needed.
 fn generate_fallback_icon() -> Image<'static> {
     let mut rgba = vec![0u8; 32 * 32 * 4];
     for y in 0..32 {
@@ -99,65 +99,65 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn toggle_overlay_lock(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("overlay") {
-        if let Some(state) = app.try_state::<AppState>() {
-            if let Ok(mut locked) = state.overlay_locked.lock() {
-                *locked = !*locked;
-                let is_locked = *locked;
-                let _ = win.set_ignore_cursor_events(is_locked);
-                let _ = app.emit("lyrica://overlay-locked", is_locked);
-                tracing::info!("Overlay lock toggled to: {}", is_locked);
+    if let Some(window) = app.get_webview_window("overlay") {
+        let is_locked = app.try_state::<AppState>()
+            .and_then(|s| s.overlay_locked.lock().ok().map(|l| *l))
+            .unwrap_or(true);
+
+        if is_locked {
+            let _ = window.set_ignore_cursor_events(false);
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut locked) = state.overlay_locked.lock() {
+                    *locked = false;
+                }
             }
+            let _ = app.emit("lyrica://overlay-locked", false);
+        } else {
+            let _ = window.set_ignore_cursor_events(true);
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut locked) = state.overlay_locked.lock() {
+                    *locked = true;
+                }
+            }
+            let _ = app.emit("lyrica://overlay-locked", true);
         }
     }
 }
 
-/// Handle tray menu item clicks.
+fn set_overlay_lock_state(app: &AppHandle, lock: bool) {
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.set_ignore_cursor_events(lock);
+        if let Some(state) = app.try_state::<AppState>() {
+            if let Ok(mut locked) = state.overlay_locked.lock() {
+                *locked = lock;
+            }
+        }
+        let _ = app.emit("lyrica://overlay-locked", lock);
+    }
+}
+
 fn handle_tray_event(app: &AppHandle, event_id: &str) {
     match event_id {
-        "toggle_lock" => {
-            toggle_overlay_lock(app);
-        }
-        "lock_overlay" => {
-            if let Some(win) = app.get_webview_window("overlay") {
-                let _ = win.set_ignore_cursor_events(true);
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut locked) = state.overlay_locked.lock() {
-                        *locked = true;
-                    }
-                }
-                let _ = app.emit("lyrica://overlay-locked", true);
-                tracing::info!("Overlay locked via tray");
-            }
-        }
-        "unlock_overlay" => {
-            if let Some(win) = app.get_webview_window("overlay") {
-                let _ = win.set_ignore_cursor_events(false);
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut locked) = state.overlay_locked.lock() {
-                        *locked = false;
-                    }
-                }
-                let _ = app.emit("lyrica://overlay-locked", false);
-                tracing::info!("Overlay unlocked via tray");
-            }
-        }
+        "toggle_lock" => toggle_overlay_lock(app),
+        "lock_overlay" => set_overlay_lock_state(app, true),
+        "unlock_overlay" => set_overlay_lock_state(app, false),
         "settings" => {
-            if let Some(win) = app.get_webview_window("settings") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-                tracing::info!("Settings window opened");
+            if let Some(window) = app.get_webview_window("settings") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                tracing::info!("Settings window opened via tray menu");
             }
         }
         "refresh_lyrics" => {
             let _ = app.emit("lyrica://refresh-lyrics", ());
-            tracing::info!("Lyrics refresh requested via tray");
+            tracing::info!("Lyrics refresh triggered via tray menu");
         }
         "restart_detection" => {
             let _ = app.emit("lyrica://restart-detection", ());
-            tracing::info!("Detection restart requested via tray");
+            tracing::info!("SMTC detection restart triggered via tray menu");
         }
+        "about" => {}
         "quit" => {
             tracing::info!("Quit requested via tray");
             app.exit(0);
