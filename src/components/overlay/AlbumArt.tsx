@@ -1,5 +1,4 @@
 import React from "react";
-import { Music2 } from "lucide-react";
 
 interface AlbumArtProps {
   albumArt?: string;
@@ -24,8 +23,12 @@ export const AlbumArt: React.FC<AlbumArtProps> = ({
           className="h-full w-full object-cover transition-opacity duration-500 animate-in fade-in-50"
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-white/5 text-white/40 backdrop-blur-md">
-          <Music2 className="h-5 w-5" />
+        <div className="flex h-full w-full items-center justify-center bg-black/40 backdrop-blur-md p-1">
+          <img
+            src="/app-logo.png"
+            alt="Lyrica Logo"
+            className="h-full w-full object-contain opacity-90 rounded"
+          />
         </div>
       )}
     </div>

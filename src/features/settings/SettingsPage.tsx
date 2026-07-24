@@ -16,7 +16,6 @@ import {
   Check,
   RotateCcw,
   Palette,
-  Sliders,
   PlayCircle,
   Music,
   Code,
@@ -137,15 +136,11 @@ export const SettingsPage: React.FC = () => {
         }`}
       >
         <div className="flex items-center gap-3">
-          <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner ${
-              isSettingsDark
-                ? "bg-sky-500/10 text-sky-400 border border-sky-500/20"
-                : "bg-sky-100 text-sky-600 border border-sky-200"
-            }`}
-          >
-            <Sliders className="w-5 h-5" />
-          </div>
+          <img
+            src="/app-logo.png"
+            alt="Lyrica Logo"
+            className="w-10 h-10 rounded-xl object-contain shadow-sm border border-neutral-800"
+          />
           <div>
             <h1
               className={`text-lg font-bold tracking-tight ${
