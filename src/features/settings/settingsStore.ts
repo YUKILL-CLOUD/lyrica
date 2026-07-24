@@ -3,11 +3,13 @@ import { Store } from "@tauri-apps/plugin-store";
 import { emit, listen } from "@tauri-apps/api/event";
 
 export type AppTheme = "dark" | "light" | "system" | "oled";
+export type SettingsUiTheme = "dark" | "light" | "system";
 export type FontFamily = "inter" | "geist" | "jetbrains-mono" | "outfit" | "nunito" | "playfair";
 export type DisplayMode = "full" | "compact" | "lyrics-only";
 
 interface SettingsState {
-  theme: AppTheme;
+  theme: AppTheme; // Floating lyrics overlay theme
+  settingsUiTheme: SettingsUiTheme; // Settings window UI theme (independent)
   fontFamily: FontFamily;
   displayMode: DisplayMode;
   fontSize: number;
@@ -29,6 +31,7 @@ interface SettingsState {
   debugMode: boolean;
 
   setTheme: (theme: AppTheme) => void;
+  setSettingsUiTheme: (theme: SettingsUiTheme) => void;
   setFontFamily: (font: FontFamily) => void;
   setDisplayMode: (mode: DisplayMode) => void;
   setFontSize: (size: number) => void;
@@ -59,6 +62,7 @@ const broadcastChannel = typeof window !== "undefined" ? new BroadcastChannel("l
 
 export const DEFAULT_SETTINGS = {
   theme: "dark" as AppTheme,
+  settingsUiTheme: "dark" as SettingsUiTheme,
   fontFamily: "geist" as FontFamily,
   displayMode: "full" as DisplayMode,
   fontSize: 18,
@@ -80,19 +84,10 @@ export const DEFAULT_SETTINGS = {
   debugMode: false,
 };
 
-function applyDOMAttributes(fontFamily?: string, theme?: string) {
+function applyFontAttribute(fontFamily?: string) {
   if (typeof document === "undefined") return;
   if (fontFamily) {
     document.documentElement.setAttribute("data-font", fontFamily);
-  }
-  if (theme) {
-    if (theme === "oled") {
-      document.documentElement.className = "overlay-mode oled";
-    } else if (theme === "light") {
-      document.documentElement.className = "overlay-mode light";
-    } else {
-      document.documentElement.className = "overlay-mode dark";
-    }
   }
 }
 
@@ -102,13 +97,13 @@ function loadInitialSettings() {
     if (raw) {
       const parsed = JSON.parse(raw);
       const merged = { ...DEFAULT_SETTINGS, ...parsed };
-      applyDOMAttributes(merged.fontFamily, merged.theme);
+      applyFontAttribute(merged.fontFamily);
       return merged;
     }
   } catch (e) {
     console.warn("Failed reading localStorage:", e);
   }
-  applyDOMAttributes(DEFAULT_SETTINGS.fontFamily, DEFAULT_SETTINGS.theme);
+  applyFontAttribute(DEFAULT_SETTINGS.fontFamily);
   return DEFAULT_SETTINGS;
 }
 
@@ -128,13 +123,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...loadInitialSettings(),
 
   setTheme: (theme) => {
-    applyDOMAttributes(undefined, theme);
     set({ theme });
     get().saveSettings();
   },
 
+  setSettingsUiTheme: (settingsUiTheme) => {
+    set({ settingsUiTheme });
+    get().saveSettings();
+  },
+
   setFontFamily: (fontFamily) => {
-    applyDOMAttributes(fontFamily, undefined);
+    applyFontAttribute(fontFamily);
     set({ fontFamily });
     get().saveSettings();
   },
@@ -230,13 +229,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   resetDefaults: () => {
-    applyDOMAttributes(DEFAULT_SETTINGS.fontFamily, DEFAULT_SETTINGS.theme);
+    applyFontAttribute(DEFAULT_SETTINGS.fontFamily);
     set({ ...DEFAULT_SETTINGS });
     get().saveSettings();
   },
 
   applyExternalSettings: (settings) => {
-    applyDOMAttributes(settings.fontFamily, settings.theme);
+    applyFontAttribute(settings.fontFamily);
     set((state) => ({ ...state, ...settings }));
   },
 
@@ -256,7 +255,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
 
       if (Object.keys(loaded).length > 0) {
-        applyDOMAttributes(loaded.fontFamily as string, loaded.theme as string);
+        applyFontAttribute(loaded.fontFamily as string);
         set((state) => ({ ...state, ...loaded }));
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...get() }));
       }
