@@ -12,11 +12,12 @@ export interface LyricLine {
   index: number;
 }
 
-/** The three lines displayed simultaneously in the overlay. */
+/** The lyric lines displayed in the overlay (with 2 active lines and surrounding context). */
 export interface LyricContext {
   prev: LyricLine | null;
   current: LyricLine | null;
   next: LyricLine | null;
+  future: LyricLine | null;
 }
 
 /** Status of the lyrics fetching lifecycle. */

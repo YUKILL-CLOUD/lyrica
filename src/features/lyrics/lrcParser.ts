@@ -96,7 +96,7 @@ export function findCurrentIndex(lines: LyricLine[], position: number): number {
 }
 
 /**
- * Returns previous, current, and next lyric lines surrounding the given index.
+ * Returns previous, current (active 1), next (active 2), and future lyric lines surrounding the given index.
  */
 export function getContext(lines: LyricLine[], index: number): LyricContext {
   if (lines.length === 0 || index < 0 || index >= lines.length) {
@@ -104,6 +104,7 @@ export function getContext(lines: LyricLine[], index: number): LyricContext {
       prev: null,
       current: null,
       next: lines.length > 0 && index < 0 ? lines[0] : null,
+      future: lines.length > 1 && index < 0 ? lines[1] : null,
     };
   }
 
@@ -111,5 +112,6 @@ export function getContext(lines: LyricLine[], index: number): LyricContext {
     prev: index > 0 ? lines[index - 1] : null,
     current: lines[index],
     next: index < lines.length - 1 ? lines[index + 1] : null,
+    future: index < lines.length - 2 ? lines[index + 2] : null,
   };
 }

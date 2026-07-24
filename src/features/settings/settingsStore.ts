@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS = {
   fontSize: 18,
   fontWeight: 700,
   activeLyricColor: "#38bdf8",
-  inactiveLyricColor: "rgba(255, 255, 255, 0.4)",
+  inactiveLyricColor: "rgba(255, 255, 255, 0.75)",
   opacity: 0.95,
   bgOpacity: 0.65,
   bgBlur: 20,

@@ -61,15 +61,18 @@ describe("lrcParser", () => {
     expect(ctxFirst.prev).toBeNull();
     expect(ctxFirst.current?.text).toBe("Line 1");
     expect(ctxFirst.next?.text).toBe("Line 2");
+    expect(ctxFirst.future?.text).toBe("Line 3");
 
     const ctxMid = getContext(lines, 1);
     expect(ctxMid.prev?.text).toBe("Line 1");
     expect(ctxMid.current?.text).toBe("Line 2");
     expect(ctxMid.next?.text).toBe("Line 3");
+    expect(ctxMid.future).toBeNull();
 
     const ctxLast = getContext(lines, 2);
     expect(ctxLast.prev?.text).toBe("Line 2");
     expect(ctxLast.current?.text).toBe("Line 3");
     expect(ctxLast.next).toBeNull();
+    expect(ctxLast.future).toBeNull();
   });
 });

@@ -93,7 +93,7 @@ export const OverlayWindow: React.FC = () => {
   const { refetch: refetchLyrics } = useLyrics(currentTrack);
 
   // Synchronize playback position with parsed lyrics via rAF
-  const { context } = useRafSync(parsedLines, playbackState);
+  const { context, currentIndex } = useRafSync(parsedLines, playbackState);
 
   // Inactivity auto-hide (only triggers when music is stopped/idle)
   useAutoHide(playbackState.isPlaying);
@@ -150,6 +150,8 @@ export const OverlayWindow: React.FC = () => {
     backgroundColor:
       theme === "oled"
         ? `rgba(0, 0, 0, ${bgOpacity})`
+        : theme === "light"
+        ? `rgba(255, 255, 255, ${bgOpacity})`
         : `rgba(18, 18, 22, ${bgOpacity})`,
     backdropFilter: `blur(${bgBlur}px) saturate(180%)`,
     WebkitBackdropFilter: `blur(${bgBlur}px) saturate(180%)`,
@@ -195,6 +197,7 @@ export const OverlayWindow: React.FC = () => {
                   source={currentTrack?.source}
                   confidence={activeProvider.confidence}
                   compact={displayMode === "compact"}
+                  theme={theme}
                 />
               </div>
             )}
@@ -202,12 +205,15 @@ export const OverlayWindow: React.FC = () => {
             {/* Lyrics synchronization display with Auto-Scaled Font Size */}
             <div data-tauri-drag-region className="w-full flex-1 flex items-center justify-center min-h-0 overflow-hidden">
               <LyricsDisplay
+                lines={parsedLines}
+                currentIndex={currentIndex}
                 context={context}
                 status={status}
                 fontSize={effectiveFontSize}
                 fontWeight={fontWeight}
                 activeLyricColor={activeLyricColor}
                 inactiveLyricColor={inactiveLyricColor}
+                theme={theme}
               />
             </div>
           </>

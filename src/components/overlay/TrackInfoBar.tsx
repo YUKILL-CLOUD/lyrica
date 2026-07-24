@@ -11,6 +11,7 @@ interface TrackInfoBarProps {
   source?: MusicSource;
   confidence?: number;
   compact?: boolean;
+  theme?: string;
 }
 
 export const TrackInfoBar: React.FC<TrackInfoBarProps> = ({
@@ -21,7 +22,10 @@ export const TrackInfoBar: React.FC<TrackInfoBarProps> = ({
   source = "unknown",
   confidence,
   compact = false,
+  theme = "dark",
 }) => {
+  const isLight = theme === "light";
+
   const getSourceBadgeText = (src: MusicSource) => {
     switch (src) {
       case "spotify":
@@ -39,13 +43,21 @@ export const TrackInfoBar: React.FC<TrackInfoBarProps> = ({
 
       <div className="flex flex-col min-w-0 flex-1 justify-center">
         <div className="flex items-center gap-1.5 min-w-0">
-          <h2 className="text-sm font-semibold tracking-tight text-white/90 truncate">
+          <h2
+            className={`text-sm font-semibold tracking-tight truncate ${
+              isLight ? "text-slate-900" : "text-white/90"
+            }`}
+          >
             {title}
           </h2>
           {source !== "unknown" && (
             <Badge
               variant="outline"
-              className="text-[9px] px-1.5 py-0 h-4 border-white/15 bg-white/5 text-white/70 font-mono flex-shrink-0"
+              className={`text-[9px] px-1.5 py-0 h-4 font-mono flex-shrink-0 ${
+                isLight
+                  ? "border-slate-300 bg-slate-100 text-slate-700"
+                  : "border-white/15 bg-white/5 text-white/70"
+              }`}
             >
               {getSourceBadgeText(source)}
               {confidence !== undefined && (
@@ -57,9 +69,13 @@ export const TrackInfoBar: React.FC<TrackInfoBarProps> = ({
           )}
         </div>
 
-        <p className="text-xs text-white/60 truncate font-medium">
+        <p
+          className={`text-xs truncate font-medium ${
+            isLight ? "text-slate-600" : "text-white/60"
+          }`}
+        >
           {artist}
-          {album ? <span className="opacity-40"> • {album}</span> : null}
+          {album ? <span className="opacity-60"> • {album}</span> : null}
         </p>
       </div>
     </div>
