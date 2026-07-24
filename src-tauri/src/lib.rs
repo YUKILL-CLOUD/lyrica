@@ -61,6 +61,16 @@ pub fn run() {
             // Build system tray
             tray::build_tray(&app_handle)?;
 
+            // Configure window icons
+            if let Some(icon) = app.default_window_icon() {
+                if let Some(settings_win) = app.get_webview_window("settings") {
+                    let _ = settings_win.set_icon(icon.clone());
+                }
+                if let Some(overlay_win) = app.get_webview_window("overlay") {
+                    let _ = overlay_win.set_icon(icon.clone());
+                }
+            }
+
             // Configure overlay window (disable OS shadow, enable click-through at startup)
             if let Some(overlay_win) = app.get_webview_window("overlay") {
                 let _ = overlay_win.set_shadow(false);
