@@ -1,40 +1,66 @@
 /**
  * Lyrics Engine for Lyrica.
  *
- * Runs a provider waterfall (LRCLIB → NetEase) with:
- *  - Request deduplication (in-flight Map<CacheKey, Promise>)
- *  - Cache-first lookup (memory → sled disk)
- *  - Metadata normalization before every search
+ * Delegates provider waterfall (LRCLIB → NetEase) to the Rust backend
+ * via Tauri IPC. This bypasses WebView fetch restrictions and CORS
+ * entirely — the Rust backend uses reqwest with no restrictions.
  *
- * Adding a new provider in future = push it to the `providers` array. No
- * other changes needed.
+ * Frontend responsibilities:
+ *  - Cache-first lookup (memory → sled disk via IPC)
+ *  - Request deduplication (in-flight Map<CacheKey, Promise>)
+ *  - Metadata normalization before every lookup
+ *
+ * All HTTP calls happen in Rust.
  */
 
-import { LyricsProvider, LyricsResult, TrackMetadata } from "@/types/lyrics";
+import { invoke } from "@tauri-apps/api/core";
+import { LyricsResult, TrackMetadata } from "@/types/lyrics";
 import { lyricsCache } from "./cache";
 import { makeCacheKey } from "./normalizer";
-import { LrclibProvider } from "./providers/lrclib";
-import { NetEaseProvider } from "./providers/netease";
 
-// Default provider chain: LRCLIB first, NetEase as fallback
-const DEFAULT_PROVIDERS: LyricsProvider[] = [
-  new LrclibProvider(),
-  new NetEaseProvider(),
-];
+interface BackendLyricsResult {
+  syncedRrc: string | null;  // Rust snake_case serialized as camelCase
+  plainLyrics: string | null;
+  provider: string;
+  lyricsType: string;
+  isInstrumental: boolean;
+}
+
+async function fetchFromBackend(track: TrackMetadata): Promise<LyricsResult | null> {
+  try {
+    const result = await invoke<BackendLyricsResult | null>("fetch_lyrics_backend", {
+      title: track.title,
+      artist: track.artist,
+      normalizedTitle: track.normalizedTitle,
+      normalizedArtist: track.normalizedArtist,
+      duration: track.duration ?? null,
+      album: track.album ?? null,
+    });
+
+    if (!result) return null;
+
+    return {
+      syncedLrc: result.syncedRrc ?? null,
+      plainLyrics: result.plainLyrics ?? null,
+      lyricsType: (result.lyricsType as "synced" | "plain" | "none") ?? "none",
+      provider: result.provider,
+      isInstrumental: result.isInstrumental ?? false,
+    };
+  } catch (err) {
+    console.error("[LyricsEngine] Rust backend invocation failed:", err);
+    return null;
+  }
+}
 
 class LyricsEngine {
-  private providers: LyricsProvider[];
   /** In-flight deduplication map: prevents concurrent fetches for the same track. */
   private inFlight = new Map<string, Promise<LyricsResult | null>>();
 
-  constructor(providers: LyricsProvider[] = DEFAULT_PROVIDERS) {
-    this.providers = providers;
-  }
-
   /**
    * Resolve lyrics for a track.
-   * Returns a cached result immediately if available.
-   * If a fetch is already in-flight for this track, awaits the existing promise.
+   * - Returns cached result immediately if available.
+   * - Deduplicates concurrent requests for the same track.
+   * - All HTTP is done in Rust (no WebView fetch restrictions).
    */
   async resolve(track: TrackMetadata): Promise<LyricsResult | null> {
     // 1. Cache hit — instant return
@@ -56,38 +82,16 @@ class LyricsEngine {
       return this.inFlight.get(key)!;
     }
 
-    // 3. Start provider waterfall
-    const promise = this.fetchFromProviders(track).finally(() => {
+    // 3. Delegate to Rust backend
+    const promise = fetchFromBackend(track).then(async (result) => {
+      await lyricsCache.set(track, result);
+      return result;
+    }).finally(() => {
       this.inFlight.delete(key);
     });
 
     this.inFlight.set(key, promise);
     return promise;
-  }
-
-  private async fetchFromProviders(track: TrackMetadata): Promise<LyricsResult | null> {
-    for (const provider of this.providers) {
-      try {
-        const result = await provider.search(track);
-        if (result) {
-          // Persist to cache regardless of provider
-          await lyricsCache.set(track, result);
-          return result;
-        }
-      } catch (err) {
-        console.warn(`[LyricsEngine] Provider "${provider.name}" threw:`, err);
-        // Continue to next provider
-      }
-    }
-
-    // All providers exhausted — cache a "none" entry to avoid re-fetching
-    await lyricsCache.set(track, null);
-    return null;
-  }
-
-  /** Replace the provider list at runtime (e.g. from settings toggles). */
-  setProviders(providers: LyricsProvider[]) {
-    this.providers = providers;
   }
 }
 

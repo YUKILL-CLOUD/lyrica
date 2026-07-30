@@ -43,6 +43,7 @@ pub fn run() {
             commands::overlay::close_settings_window,
             commands::cache::get_cached_lyrics,
             commands::cache::set_cached_lyrics,
+            commands::lyrics::fetch_lyrics_backend,
         ])
         // --- Window Event Handler (Prevent destroying settings window on 'X') ---
         .on_window_event(|window, event| {
