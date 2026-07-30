@@ -8,6 +8,13 @@ import { LyricLine, LyricContext } from "@/types/lyrics";
  * - Metadata tags: `[ar:Artist]`, `[ti:Title]`, `[al:Album]` (skipped)
  * - Empty lines and instrumental section markers
  */
+const CREDIT_LINE_PATTERNS: RegExp[] = [
+  /^(lyrics?|lyricist|written|words)(\s+by)?\s*[:：]/i,
+  /^(composed|composer|music)(\s+by)?\s*[:：]/i,
+  /^(arranged|arranger|produced|producer)(\s+by)?\s*[:：]/i,
+  /^(qq音乐|网易云|歌词贡献|lrc generated)/i,
+];
+
 export function parseLrc(lrc: string | null | undefined): LyricLine[] {
   if (!lrc || typeof lrc !== "string") {
     return [];
@@ -50,6 +57,11 @@ export function parseLrc(lrc: string | null | undefined): LyricLine[] {
 
     // Strip out all timestamp tags to extract lyric text
     const text = trimmed.replace(timestampRegex, "").trim();
+
+    // Skip credit metadata lines (e.g. "Lyrics by: ...", "Composed by: ...", "QQ音乐")
+    if (text && CREDIT_LINE_PATTERNS.some((pattern) => pattern.test(text))) {
+      continue;
+    }
 
     if (timestamps.length > 0) {
       for (const time of timestamps) {
