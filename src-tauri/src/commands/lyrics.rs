@@ -97,7 +97,7 @@ async fn lrclib_fetch(
         }
     }
 
-    // Strategy 2: /api/search by title only
+    // Strategy 2: /api/search by track_name
     if let Ok(res) = client
         .get(format!("{LRCLIB_BASE}/search"))
         .query(&[("track_name", title)])
@@ -107,15 +107,9 @@ async fn lrclib_fetch(
     {
         if res.status().is_success() {
             if let Ok(results) = res.json::<Vec<LrclibTrack>>().await {
-                let best = results
-                    .into_iter()
-                    .find(|r| r.synced_lyrics.is_some())
-                    .or_else(|| {
-                        // Already consumed — can't re-search; just return None
-                        None
-                    });
-                if let Some(track) = best {
-                    if track.instrumental == Some(true) {
+                if !results.is_empty() {
+                    let best = results.iter().find(|r| r.synced_lyrics.is_some()).unwrap_or(&results[0]);
+                    if best.instrumental == Some(true) {
                         return Some(FetchedLyrics {
                             synced_lrc: None,
                             plain_lyrics: None,
@@ -124,11 +118,48 @@ async fn lrclib_fetch(
                             is_instrumental: true,
                         });
                     }
-                    if track.synced_lyrics.is_some() || track.plain_lyrics.is_some() {
-                        let has_synced = track.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                    if best.synced_lyrics.is_some() || best.plain_lyrics.is_some() {
+                        let has_synced = best.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
                         return Some(FetchedLyrics {
-                            synced_lrc: track.synced_lyrics,
-                            plain_lyrics: track.plain_lyrics,
+                            synced_lrc: best.synced_lyrics.clone(),
+                            plain_lyrics: best.plain_lyrics.clone(),
+                            provider: "lrclib".into(),
+                            lyrics_type: if has_synced { "synced".into() } else { "plain".into() },
+                            is_instrumental: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Strategy 3: /api/search with query string (q = artist + title)
+    let q = format!("{artist} {title}");
+    if let Ok(res) = client
+        .get(format!("{LRCLIB_BASE}/search"))
+        .query(&[("q", q.as_str())])
+        .header("Lrclib-Client", "Lyrica/1.0.0 (https://github.com/YUKILL-CLOUD/lyrica)")
+        .send()
+        .await
+    {
+        if res.status().is_success() {
+            if let Ok(results) = res.json::<Vec<LrclibTrack>>().await {
+                if !results.is_empty() {
+                    let best = results.iter().find(|r| r.synced_lyrics.is_some()).unwrap_or(&results[0]);
+                    if best.instrumental == Some(true) {
+                        return Some(FetchedLyrics {
+                            synced_lrc: None,
+                            plain_lyrics: None,
+                            provider: "lrclib".into(),
+                            lyrics_type: "none".into(),
+                            is_instrumental: true,
+                        });
+                    }
+                    if best.synced_lyrics.is_some() || best.plain_lyrics.is_some() {
+                        let has_synced = best.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                        return Some(FetchedLyrics {
+                            synced_lrc: best.synced_lyrics.clone(),
+                            plain_lyrics: best.plain_lyrics.clone(),
                             provider: "lrclib".into(),
                             lyrics_type: if has_synced { "synced".into() } else { "plain".into() },
                             is_instrumental: false,

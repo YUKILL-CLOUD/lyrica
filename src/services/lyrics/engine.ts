@@ -19,7 +19,7 @@ import { lyricsCache } from "./cache";
 import { makeCacheKey } from "./normalizer";
 
 interface BackendLyricsResult {
-  syncedRrc: string | null;  // Rust snake_case serialized as camelCase
+  syncedLrc: string | null;  // Rust snake_case serialized as camelCase
   plainLyrics: string | null;
   provider: string;
   lyricsType: string;
@@ -40,7 +40,7 @@ async function fetchFromBackend(track: TrackMetadata): Promise<LyricsResult | nu
     if (!result) return null;
 
     return {
-      syncedLrc: result.syncedRrc ?? null,
+      syncedLrc: result.syncedLrc ?? null,
       plainLyrics: result.plainLyrics ?? null,
       lyricsType: (result.lyricsType as "synced" | "plain" | "none") ?? "none",
       provider: result.provider,
