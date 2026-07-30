@@ -1,6 +1,7 @@
 // Lyrica — Backend Lyrics Fetcher
 // Runs the QQ Music → LRCLIB → NetEase provider waterfall from the Rust backend.
-// Enforces strict artist matching while iterating ALL search candidates for max coverage.
+// Passes both raw metadata (e.g. "The Red Strings") and normalized metadata (e.g. "red strings")
+// to prevent search index errors on databases like LRCLIB.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -79,14 +80,23 @@ struct QqLyricResponse {
     lyric: Option<String>,
 }
 
-async fn qqmusic_fetch(client: &Client, title: &str, artist: &str) -> Option<FetchedLyrics> {
-    let title_clean = title.replace(['\'', '’'], "");
+async fn qqmusic_fetch(
+    client: &Client,
+    raw_title: &str,
+    raw_artist: &str,
+    norm_title: &str,
+    norm_artist: &str,
+) -> Option<FetchedLyrics> {
     let queries = [
-        format!("{artist} {title}"),
-        format!("{artist} {title_clean}"),
+        format!("{raw_artist} {raw_title}"),
+        format!("{norm_artist} {norm_title}"),
     ];
 
     for query in &queries {
+        if query.trim().is_empty() {
+            continue;
+        }
+
         let search_res = client
             .get("https://c.y.qq.com/soso/fcgi-bin/client_search_cp")
             .query(&[
@@ -107,10 +117,11 @@ async fn qqmusic_fetch(client: &Client, title: &str, artist: &str) -> Option<Fet
 
         let Some(song_list) = songs else { continue };
 
-        // Loop over ALL candidate songs (don't stop at candidate 1 if it lacks lyrics)
         for song in song_list {
             let is_artist = song.singer.as_ref().map_or(false, |singers| {
-                singers.iter().any(|sg| is_artist_match(artist, &sg.name))
+                singers.iter().any(|sg| {
+                    is_artist_match(raw_artist, &sg.name) || is_artist_match(norm_artist, &sg.name)
+                })
             });
 
             if !is_artist {
@@ -174,28 +185,30 @@ struct LrclibTrack {
 
 async fn lrclib_fetch(
     client: &Client,
-    title: &str,
-    artist: &str,
+    raw_title: &str,
+    raw_artist: &str,
+    norm_title: &str,
+    norm_artist: &str,
     duration: Option<f64>,
     album: Option<&str>,
 ) -> Option<FetchedLyrics> {
-    // Strategy 1: /api/get with exact parameters
-    let mut params = vec![
-        ("track_name", title.to_string()),
-        ("artist_name", artist.to_string()),
+    // 1. Try raw metadata first with /api/get
+    let mut params1 = vec![
+        ("track_name", raw_title.to_string()),
+        ("artist_name", raw_artist.to_string()),
     ];
     if let Some(d) = duration {
-        params.push(("duration", (d.round() as u64).to_string()));
+        params1.push(("duration", (d.round() as u64).to_string()));
     }
     if let Some(a) = album {
         if !a.is_empty() {
-            params.push(("album_name", a.to_string()));
+            params1.push(("album_name", a.to_string()));
         }
     }
 
     if let Ok(res) = client
         .get(format!("{LRCLIB_BASE}/get"))
-        .query(&params)
+        .query(&params1)
         .header("Lrclib-Client", "Lyrica/1.0.0 (https://github.com/YUKILL-CLOUD/lyrica)")
         .send()
         .await
@@ -225,44 +238,55 @@ async fn lrclib_fetch(
         }
     }
 
-    // Strategy 2: /api/search with query string and strict artist verification
-    let q = format!("{artist} {title}");
-    if let Ok(res) = client
-        .get(format!("{LRCLIB_BASE}/search"))
-        .query(&[("q", q.as_str())])
-        .header("Lrclib-Client", "Lyrica/1.0.0 (https://github.com/YUKILL-CLOUD/lyrica)")
-        .send()
-        .await
-    {
-        if res.status().is_success() {
-            if let Ok(results) = res.json::<Vec<LrclibTrack>>().await {
-                let matching_track = results.into_iter().find(|r| {
-                    if let Some(cand_artist) = &r.artist_name {
-                        is_artist_match(artist, cand_artist) && (r.synced_lyrics.is_some() || r.plain_lyrics.is_some())
-                    } else {
-                        false
-                    }
-                });
+    // 2. Try search queries with raw and normalized queries
+    let queries = [
+        format!("{raw_artist} {raw_title}"),
+        format!("{norm_artist} {norm_title}"),
+    ];
 
-                if let Some(best) = matching_track {
-                    if best.instrumental == Some(true) {
-                        return Some(FetchedLyrics {
-                            synced_lrc: None,
-                            plain_lyrics: None,
-                            provider: "lrclib".into(),
-                            lyrics_type: "none".into(),
-                            is_instrumental: true,
-                        });
-                    }
-                    if best.synced_lyrics.is_some() || best.plain_lyrics.is_some() {
-                        let has_synced = best.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-                        return Some(FetchedLyrics {
-                            synced_lrc: best.synced_lyrics,
-                            plain_lyrics: best.plain_lyrics,
-                            provider: "lrclib".into(),
-                            lyrics_type: if has_synced { "synced".into() } else { "plain".into() },
-                            is_instrumental: false,
-                        });
+    for q in &queries {
+        if q.trim().is_empty() {
+            continue;
+        }
+
+        if let Ok(res) = client
+            .get(format!("{LRCLIB_BASE}/search"))
+            .query(&[("q", q.as_str())])
+            .header("Lrclib-Client", "Lyrica/1.0.0 (https://github.com/YUKILL-CLOUD/lyrica)")
+            .send()
+            .await
+        {
+            if res.status().is_success() {
+                if let Ok(results) = res.json::<Vec<LrclibTrack>>().await {
+                    let matching_track = results.into_iter().find(|r| {
+                        let has_lyrics = r.synced_lyrics.is_some() || r.plain_lyrics.is_some() || r.instrumental == Some(true);
+                        if let Some(cand_artist) = &r.artist_name {
+                            has_lyrics && (is_artist_match(raw_artist, cand_artist) || is_artist_match(norm_artist, cand_artist))
+                        } else {
+                            false
+                        }
+                    });
+
+                    if let Some(best) = matching_track {
+                        if best.instrumental == Some(true) {
+                            return Some(FetchedLyrics {
+                                synced_lrc: None,
+                                plain_lyrics: None,
+                                provider: "lrclib".into(),
+                                lyrics_type: "none".into(),
+                                is_instrumental: true,
+                            });
+                        }
+                        if best.synced_lyrics.is_some() || best.plain_lyrics.is_some() {
+                            let has_synced = best.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                            return Some(FetchedLyrics {
+                                synced_lrc: best.synced_lyrics,
+                                plain_lyrics: best.plain_lyrics,
+                                provider: "lrclib".into(),
+                                lyrics_type: if has_synced { "synced".into() } else { "plain".into() },
+                                is_instrumental: false,
+                            });
+                        }
                     }
                 }
             }
@@ -308,87 +332,103 @@ struct NetEaseLrc {
     lyric: Option<String>,
 }
 
-async fn netease_fetch(client: &Client, title: &str, artist: &str) -> Option<FetchedLyrics> {
-    let query = format!("{artist} {title}");
+async fn netease_fetch(
+    client: &Client,
+    raw_title: &str,
+    raw_artist: &str,
+    norm_title: &str,
+    norm_artist: &str,
+) -> Option<FetchedLyrics> {
+    let queries = [
+        format!("{raw_artist} {raw_title}"),
+        format!("{norm_artist} {norm_title}"),
+    ];
 
-    let search_res = client
-        .get(NETEASE_SEARCH)
-        .header("Referer", "https://music.163.com")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .query(&[
-            ("csrf_token", ""),
-            ("s", query.as_str()),
-            ("type", "1"),
-            ("offset", "0"),
-            ("total", "true"),
-            ("limit", "5"),
-        ])
-        .send()
-        .await;
-
-    let songs = match search_res {
-        Ok(r) => match r.json::<NetEaseSearchResult>().await {
-            Ok(data) => data.result.and_then(|r| r.songs),
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-
-    let Some(song_list) = songs else { return None };
-
-    // Loop over ALL candidate songs
-    for song in song_list {
-        let is_artist = {
-            let artists_vec = song.ar.as_ref().or(song.artists.as_ref());
-            if let Some(artists) = artists_vec {
-                artists.iter().any(|a| is_artist_match(artist, &a.name))
-            } else {
-                false
-            }
-        };
-
-        if !is_artist {
+    for query in &queries {
+        if query.trim().is_empty() {
             continue;
         }
 
-        let lyric_res = client
-            .get(NETEASE_LYRIC)
+        let search_res = client
+            .get(NETEASE_SEARCH)
             .header("Referer", "https://music.163.com")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .query(&[
-                ("id", song.id.to_string().as_str()),
-                ("lv", "1"),
-                ("kv", "1"),
-                ("tv", "-1"),
+                ("csrf_token", ""),
+                ("s", query.as_str()),
+                ("type", "1"),
+                ("offset", "0"),
+                ("total", "true"),
+                ("limit", "5"),
             ])
             .send()
             .await;
 
-        let lrc_text = match lyric_res {
-            Ok(r) => match r.json::<NetEaseLyricResult>().await {
-                Ok(data) => data.lrc.and_then(|l| l.lyric).filter(|s| !s.trim().is_empty()),
+        let songs = match search_res {
+            Ok(r) => match r.json::<NetEaseSearchResult>().await {
+                Ok(data) => data.result.and_then(|r| r.songs),
                 Err(_) => None,
             },
             Err(_) => None,
         };
 
-        if let Some(lrc) = lrc_text {
-            if lrc.contains("\u{7eaf}\u{97f3}\u{4e50}") {
+        let Some(song_list) = songs else { continue };
+
+        for song in song_list {
+            let is_artist = {
+                let artists_vec = song.ar.as_ref().or(song.artists.as_ref());
+                if let Some(artists) = artists_vec {
+                    artists.iter().any(|a| {
+                        is_artist_match(raw_artist, &a.name) || is_artist_match(norm_artist, &a.name)
+                    })
+                } else {
+                    false
+                }
+            };
+
+            if !is_artist {
+                continue;
+            }
+
+            let lyric_res = client
+                .get(NETEASE_LYRIC)
+                .header("Referer", "https://music.163.com")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .query(&[
+                    ("id", song.id.to_string().as_str()),
+                    ("lv", "1"),
+                    ("kv", "1"),
+                    ("tv", "-1"),
+                ])
+                .send()
+                .await;
+
+            let lrc_text = match lyric_res {
+                Ok(r) => match r.json::<NetEaseLyricResult>().await {
+                    Ok(data) => data.lrc.and_then(|l| l.lyric).filter(|s| !s.trim().is_empty()),
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            };
+
+            if let Some(lrc) = lrc_text {
+                if lrc.contains("\u{7eaf}\u{97f3}\u{4e50}") {
+                    return Some(FetchedLyrics {
+                        synced_lrc: None,
+                        plain_lyrics: None,
+                        provider: "netease".into(),
+                        lyrics_type: "none".into(),
+                        is_instrumental: true,
+                    });
+                }
                 return Some(FetchedLyrics {
-                    synced_lrc: None,
+                    synced_lrc: Some(lrc),
                     plain_lyrics: None,
                     provider: "netease".into(),
-                    lyrics_type: "none".into(),
-                    is_instrumental: true,
+                    lyrics_type: "synced".into(),
+                    is_instrumental: false,
                 });
             }
-            return Some(FetchedLyrics {
-                synced_lrc: Some(lrc),
-                plain_lyrics: None,
-                provider: "netease".into(),
-                lyrics_type: "synced".into(),
-                is_instrumental: false,
-            });
         }
     }
 
@@ -402,7 +442,7 @@ async fn netease_fetch(client: &Client, title: &str, artist: &str) -> Option<Fet
 #[tauri::command]
 pub async fn fetch_lyrics_backend(
     title: String,
-    _artist: String,
+    artist: String,
     normalized_title: String,
     normalized_artist: String,
     duration: Option<f64>,
@@ -410,15 +450,23 @@ pub async fn fetch_lyrics_backend(
 ) -> Result<Option<FetchedLyrics>, String> {
     let client = build_client().map_err(|e| e.to_string())?;
 
-    // 1. Try QQ Music first (with multi-candidate scanning)
-    if let Some(result) = qqmusic_fetch(&client, &normalized_title, &normalized_artist).await {
+    // 1. Try QQ Music first
+    if let Some(result) = qqmusic_fetch(
+        &client,
+        &title,
+        &artist,
+        &normalized_title,
+        &normalized_artist,
+    ).await {
         tracing::info!(provider = "qqmusic", title = %title, "Lyrics found via QQ Music");
         return Ok(Some(result));
     }
 
-    // 2. Try LRCLIB second (with multi-candidate scanning)
+    // 2. Try LRCLIB second (tries both raw "The Red Strings" and normalized "red strings")
     if let Some(result) = lrclib_fetch(
         &client,
+        &title,
+        &artist,
         &normalized_title,
         &normalized_artist,
         duration,
@@ -428,8 +476,14 @@ pub async fn fetch_lyrics_backend(
         return Ok(Some(result));
     }
 
-    // 3. Fallback: NetEase (with multi-candidate scanning)
-    if let Some(result) = netease_fetch(&client, &normalized_title, &normalized_artist).await {
+    // 3. Fallback: NetEase
+    if let Some(result) = netease_fetch(
+        &client,
+        &title,
+        &artist,
+        &normalized_title,
+        &normalized_artist,
+    ).await {
         tracing::info!(provider = "netease", title = %title, "Lyrics found via NetEase");
         return Ok(Some(result));
     }
