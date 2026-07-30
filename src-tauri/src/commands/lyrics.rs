@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(3);
+const TIMEOUT: Duration = Duration::from_secs(8);
 const LRCLIB_BASE: &str = "https://lrclib.net/api";
 const NETEASE_SEARCH: &str = "https://music.163.com/api/search/get/web";
 const NETEASE_LYRIC: &str = "https://music.163.com/api/song/lyric";
@@ -33,8 +33,13 @@ fn is_artist_match(target_artist: &str, candidate_artist: &str) -> bool {
 /// Check if an LRC file header [ti:SongTitle] mismatches the requested song title.
 /// Prevents showing corrupted database uploads (e.g. "Vaya Con Dios" returned for "Tibok").
 fn is_lrc_title_mismatch(lrc_text: &str, requested_title: &str) -> bool {
-    let req = requested_title.to_lowercase().trim().to_string();
-    if req.is_empty() {
+    let req_clean = requested_title
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>();
+
+    if req_clean.trim().is_empty() {
         return false;
     }
 
@@ -43,13 +48,25 @@ fn is_lrc_title_mismatch(lrc_text: &str, requested_title: &str) -> bool {
         let lower = trimmed.to_lowercase();
         if lower.starts_with("[ti:") {
             if let Some(end_idx) = trimmed.find(']') {
-                let tag_title = trimmed[4..end_idx].to_lowercase().trim().to_string();
-                if !tag_title.is_empty() {
-                    let tag_clean = tag_title.replace(['\'', '’'], "");
-                    let req_clean = req.replace(['\'', '’'], "");
-                    if !tag_clean.contains(&req_clean) && !req_clean.contains(&tag_clean) {
-                        tracing::warn!(tag_title = %tag_title, requested = %requested_title, "LRC title header mismatch rejected!");
-                        return true;
+                let tag_raw = &trimmed[4..end_idx];
+                let tag_clean = tag_raw
+                    .to_lowercase()
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                    .collect::<String>();
+
+                if !tag_clean.trim().is_empty() {
+                    let tag_words: Vec<&str> = tag_clean.split_whitespace().filter(|w| w.len() >= 2).collect();
+                    let req_words: Vec<&str> = req_clean.split_whitespace().filter(|w| w.len() >= 2).collect();
+
+                    if !tag_words.is_empty() && !req_words.is_empty() {
+                        let has_overlap = req_words.iter().any(|rw| tag_clean.contains(rw))
+                            || tag_words.iter().any(|tw| req_clean.contains(tw));
+
+                        if !has_overlap {
+                            tracing::warn!(tag_title = %tag_raw, requested = %requested_title, "LRC title header mismatch rejected!");
+                            return true;
+                        }
                     }
                 }
             }
