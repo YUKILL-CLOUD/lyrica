@@ -1,5 +1,6 @@
 // Lyrica — Embedded Lyrics Cache Engine
-// Uses sled KV store to persist LRCLIB synced lyrics on disk at %AppData%\lyrica\lyrics-cache\
+// Uses sled KV store to persist lyrics on disk at %AppData%\lyrica\lyrics-cache\
+// Schema Version 2 — includes provider metadata, lyrics type, and schema versioning.
 
 use std::path::Path;
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,30 @@ use serde::{Deserialize, Serialize};
 pub struct CachedLyrics {
     pub synced_lrc: Option<String>,
     pub plain_lyrics: Option<String>,
-    pub fetched_at: u64,
-    pub version: u8,
+
+    // Rich metadata (schema v2)
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub lyrics_type: Option<String>,
+    #[serde(default)]
+    pub is_instrumental: Option<bool>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub schema_version: Option<u8>,
+
+    // Legacy field kept for backward compat (schema v1)
+    #[serde(default)]
+    pub fetched_at: Option<u64>,
+    #[serde(default)]
+    pub cached_at: Option<u64>,
+    #[serde(default)]
+    pub version: Option<u8>,
 }
 
 pub struct LyricsCache {

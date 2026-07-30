@@ -58,7 +58,32 @@ export const LyricsDisplay: React.FC<LyricsDisplayProps> = ({
     );
   }
 
-  if (status === "not_found" || status === "no_synced") {
+  if (status === "instrumental") {
+    return (
+      <div
+        className={`flex flex-col items-center justify-center py-4 gap-1 font-medium ${
+          isLight ? "text-slate-400" : "text-white/40"
+        }`}
+      >
+        <span className="text-base">♪ Instrumental</span>
+        <span className="text-xs opacity-70">No lyrics available</span>
+      </div>
+    );
+  }
+
+  if (status === "not_found") {
+    return (
+      <div
+        className={`flex flex-col items-center justify-center py-4 text-xs font-medium ${
+          isLight ? "text-slate-400" : "text-white/40"
+        }`}
+      >
+        No lyrics found
+      </div>
+    );
+  }
+
+  if (status === "no_synced") {
     return (
       <div
         className={`flex flex-col items-center justify-center py-4 text-xs font-medium ${
