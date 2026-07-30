@@ -1,5 +1,5 @@
 // Lyrica — Backend Lyrics Fetcher
-// Runs the LRCLIB → NetEase provider waterfall from the Rust backend.
+// Runs the QQ Music → LRCLIB → NetEase provider waterfall from the Rust backend.
 // This bypasses WebView fetch restrictions and CORS entirely.
 
 use reqwest::Client;
@@ -30,6 +30,107 @@ pub struct FetchedLyrics {
     pub provider: String,
     pub lyrics_type: String,  // "synced" | "plain" | "none"
     pub is_instrumental: bool,
+}
+
+// ────────────────────────────────────────────────────────────
+// QQ Music Provider (Primary — High Availability Synced LRC)
+// ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct QqSearchResponse {
+    data: Option<QqSearchData>,
+}
+
+#[derive(Deserialize)]
+struct QqSearchData {
+    song: Option<QqSongList>,
+}
+
+#[derive(Deserialize)]
+struct QqSongList {
+    list: Option<Vec<QqSong>>,
+}
+
+#[derive(Deserialize)]
+struct QqSong {
+    songmid: String,
+}
+
+#[derive(Deserialize)]
+struct QqLyricResponse {
+    lyric: Option<String>,
+}
+
+async fn qqmusic_fetch(client: &Client, title: &str, artist: &str) -> Option<FetchedLyrics> {
+    let queries = [
+        format!("{artist} {title}"),
+        title.to_string(),
+    ];
+
+    for query in &queries {
+        let search_res = client
+            .get("https://c.y.qq.com/soso/fcgi-bin/client_search_cp")
+            .query(&[
+                ("w", query.as_str()),
+                ("format", "json"),
+                ("n", "3"),
+            ])
+            .send()
+            .await;
+
+        let songmid = match search_res {
+            Ok(r) => match r.json::<QqSearchResponse>().await {
+                Ok(data) => data.data
+                    .and_then(|d| d.song)
+                    .and_then(|s| s.list)
+                    .and_then(|l| l.into_iter().next())
+                    .map(|s| s.songmid),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        let Some(mid) = songmid else { continue };
+
+        let lyric_res = client
+            .get("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")
+            .header("Referer", "https://y.qq.com/")
+            .query(&[
+                ("songmid", mid.as_str()),
+                ("format", "json"),
+                ("nobase64", "1"),
+            ])
+            .send()
+            .await;
+
+        let raw_lyric = match lyric_res {
+            Ok(r) => match r.json::<QqLyricResponse>().await {
+                Ok(data) => data.lyric.filter(|s| !s.trim().is_empty() && s.contains('[')),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        if let Some(lrc) = raw_lyric {
+            let cleaned = lrc
+                .replace("&apos;", "'")
+                .replace("&quot;", "\"")
+                .replace("&#32;", " ")
+                .replace("&#38;", "&")
+                .replace("&#10;", "\n")
+                .replace("&#13;", "");
+
+            return Some(FetchedLyrics {
+                synced_lrc: Some(cleaned),
+                plain_lyrics: None,
+                provider: "qqmusic".into(),
+                lyrics_type: "synced".into(),
+                is_instrumental: false,
+            });
+        }
+    }
+
+    None
 }
 
 // ────────────────────────────────────────────────────────────
@@ -298,7 +399,13 @@ pub async fn fetch_lyrics_backend(
 ) -> Result<Option<FetchedLyrics>, String> {
     let client = build_client().map_err(|e| e.to_string())?;
 
-    // Try LRCLIB first with normalized metadata
+    // 1. Try QQ Music first (High global availability & synced LRC)
+    if let Some(result) = qqmusic_fetch(&client, &normalized_title, &normalized_artist).await {
+        tracing::info!(provider = "qqmusic", title = %title, "Lyrics found via QQ Music");
+        return Ok(Some(result));
+    }
+
+    // 2. Try LRCLIB second
     if let Some(result) = lrclib_fetch(
         &client,
         &normalized_title,
@@ -306,15 +413,13 @@ pub async fn fetch_lyrics_backend(
         duration,
         album.as_deref(),
     ).await {
-        tracing::info!(provider = "lrclib", title = %title, "Lyrics found");
+        tracing::info!(provider = "lrclib", title = %title, "Lyrics found via LRCLIB");
         return Ok(Some(result));
     }
 
-    tracing::info!(title = %title, "LRCLIB miss — trying NetEase");
-
-    // Fallback: NetEase
+    // 3. Fallback: NetEase
     if let Some(result) = netease_fetch(&client, &normalized_title, &normalized_artist).await {
-        tracing::info!(provider = "netease", title = %title, "Lyrics found");
+        tracing::info!(provider = "netease", title = %title, "Lyrics found via NetEase");
         return Ok(Some(result));
     }
 
