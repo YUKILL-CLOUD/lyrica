@@ -1,13 +1,12 @@
 // Lyrica — Backend Lyrics Fetcher
 // Runs the QQ Music → LRCLIB → NetEase provider waterfall from the Rust backend.
-// Passes both raw metadata (e.g. "The Red Strings") and normalized metadata (e.g. "red strings")
-// to prevent search index errors on databases like LRCLIB.
+// Rejects corrupted LRC uploads where [ti:Title] tag mismatches requested song title.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(3);
 const LRCLIB_BASE: &str = "https://lrclib.net/api";
 const NETEASE_SEARCH: &str = "https://music.163.com/api/search/get/web";
 const NETEASE_LYRIC: &str = "https://music.163.com/api/song/lyric";
@@ -29,6 +28,35 @@ fn is_artist_match(target_artist: &str, candidate_artist: &str) -> bool {
     }
 
     target.contains(&candidate) || candidate.contains(&target)
+}
+
+/// Check if an LRC file header [ti:SongTitle] mismatches the requested song title.
+/// Prevents showing corrupted database uploads (e.g. "Vaya Con Dios" returned for "Tibok").
+fn is_lrc_title_mismatch(lrc_text: &str, requested_title: &str) -> bool {
+    let req = requested_title.to_lowercase().trim().to_string();
+    if req.is_empty() {
+        return false;
+    }
+
+    for line in lrc_text.lines().take(15) {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("[ti:") {
+            if let Some(end_idx) = trimmed.find(']') {
+                let tag_title = trimmed[4..end_idx].to_lowercase().trim().to_string();
+                if !tag_title.is_empty() {
+                    let tag_clean = tag_title.replace(['\'', '’'], "");
+                    let req_clean = req.replace(['\'', '’'], "");
+                    if !tag_clean.contains(&req_clean) && !req_clean.contains(&tag_clean) {
+                        tracing::warn!(tag_title = %tag_title, requested = %requested_title, "LRC title header mismatch rejected!");
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // ────────────────────────────────────────────────────────────
@@ -148,6 +176,11 @@ async fn qqmusic_fetch(
             };
 
             if let Some(lrc) = raw_lyric {
+                // Reject corrupted database uploads where [ti:Title] tag mismatches
+                if is_lrc_title_mismatch(&lrc, raw_title) && is_lrc_title_mismatch(&lrc, norm_title) {
+                    continue;
+                }
+
                 let cleaned = lrc
                     .replace("&apos;", "'")
                     .replace("&quot;", "\"")
@@ -412,6 +445,10 @@ async fn netease_fetch(
             };
 
             if let Some(lrc) = lrc_text {
+                if is_lrc_title_mismatch(&lrc, raw_title) && is_lrc_title_mismatch(&lrc, norm_title) {
+                    continue;
+                }
+
                 if lrc.contains("\u{7eaf}\u{97f3}\u{4e50}") {
                     return Some(FetchedLyrics {
                         synced_lrc: None,
@@ -450,7 +487,7 @@ pub async fn fetch_lyrics_backend(
 ) -> Result<Option<FetchedLyrics>, String> {
     let client = build_client().map_err(|e| e.to_string())?;
 
-    // 1. Try QQ Music first
+    // 1. Try QQ Music first (with LRC title header verification)
     if let Some(result) = qqmusic_fetch(
         &client,
         &title,
@@ -462,7 +499,7 @@ pub async fn fetch_lyrics_backend(
         return Ok(Some(result));
     }
 
-    // 2. Try LRCLIB second (tries both raw "The Red Strings" and normalized "red strings")
+    // 2. Try LRCLIB second
     if let Some(result) = lrclib_fetch(
         &client,
         &title,
