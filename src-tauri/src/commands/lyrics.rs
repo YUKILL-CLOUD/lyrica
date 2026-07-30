@@ -1,6 +1,6 @@
 // Lyrica — Backend Lyrics Fetcher
-// Provider waterfall: LRCLIB (Primary) → NetEase (Secondary).
-// QQ Music is completely excluded as per user directive.
+// Waterfall: LRCLIB (Primary) → Kugou (High-Availability Secondary) → NetEase (Tertiary).
+// All fetched lyrics pass through CJK Chinese translation line filtering in the parser.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -216,7 +216,157 @@ async fn lrclib_fetch(
 }
 
 // ────────────────────────────────────────────────────────────
-// NetEase Provider (Secondary)
+// Kugou Provider (High-Availability Secondary)
+// ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct KugouSearchResponse {
+    data: Option<KugouSearchData>,
+}
+
+#[derive(Deserialize)]
+struct KugouSearchData {
+    info: Option<Vec<KugouSong>>,
+}
+
+#[derive(Deserialize)]
+struct KugouSong {
+    hash: String,
+    singername: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct KugouLrcSearchResponse {
+    candidates: Option<Vec<KugouCandidate>>,
+}
+
+#[derive(Deserialize)]
+struct KugouCandidate {
+    id: String,
+    accesskey: String,
+}
+
+#[derive(Deserialize)]
+struct KugouDownloadResponse {
+    content: Option<String>,
+}
+
+async fn kugou_fetch(
+    client: &Client,
+    raw_title: &str,
+    raw_artist: &str,
+    norm_title: &str,
+    norm_artist: &str,
+) -> Option<FetchedLyrics> {
+    let queries = [
+        format!("{raw_artist} {raw_title}"),
+        format!("{norm_artist} {norm_title}"),
+    ];
+
+    for query in &queries {
+        if query.trim().is_empty() {
+            continue;
+        }
+
+        let search_res = client
+            .get("http://mobilecdn.kugou.com/api/v3/search/song")
+            .query(&[
+                ("format", "json"),
+                ("keyword", query.as_str()),
+                ("page", "1"),
+                ("pagesize", "5"),
+            ])
+            .send()
+            .await;
+
+        let songs = match search_res {
+            Ok(r) => match r.json::<KugouSearchResponse>().await {
+                Ok(data) => data.data.and_then(|d| d.info),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        let Some(song_list) = songs else { continue };
+
+        for song in song_list {
+            let is_artist = song.singername.as_ref().map_or(false, |singer| {
+                is_artist_match(raw_artist, singer) || is_artist_match(norm_artist, singer)
+            });
+
+            if !is_artist {
+                continue;
+            }
+
+            let lrc_search_res = client
+                .get("http://krcs.kugou.com/search")
+                .query(&[
+                    ("ver", "1"),
+                    ("man", "yes"),
+                    ("client", "mobi"),
+                    ("hash", song.hash.as_str()),
+                ])
+                .send()
+                .await;
+
+            let candidate = match lrc_search_res {
+                Ok(r) => match r.json::<KugouLrcSearchResponse>().await {
+                    Ok(data) => data.candidates.and_then(|c| c.into_iter().next()),
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            };
+
+            let Some(cand) = candidate else { continue };
+
+            let text_res = client
+                .get("http://lyrics.kugou.com/download")
+                .query(&[
+                    ("ver", "1"),
+                    ("client", "pc"),
+                    ("id", cand.id.as_str()),
+                    ("accesskey", cand.accesskey.as_str()),
+                    ("fmt", "lrc"),
+                    ("charset", "utf8"),
+                ])
+                .send()
+                .await;
+
+            let base64_content = match text_res {
+                Ok(r) => match r.json::<KugouDownloadResponse>().await {
+                    Ok(data) => data.content.filter(|s| !s.trim().is_empty()),
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            };
+
+            if let Some(b64) = base64_content {
+                use base64::Engine;
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+                    if let Ok(lrc_str) = String::from_utf8(bytes) {
+                        if !lrc_str.trim().is_empty() && lrc_str.contains('[') {
+                            if is_lrc_title_mismatch(&lrc_str, raw_title) && is_lrc_title_mismatch(&lrc_str, norm_title) {
+                                continue;
+                            }
+                            return Some(FetchedLyrics {
+                                synced_lrc: Some(lrc_str),
+                                plain_lyrics: None,
+                                provider: "kugou".into(),
+                                lyrics_type: "synced".into(),
+                                is_instrumental: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// ────────────────────────────────────────────────────────────
+// NetEase Provider (Tertiary)
 // ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -360,7 +510,7 @@ async fn netease_fetch(
 
 // ────────────────────────────────────────────────────────────
 // Tauri command — called by useLyrics hook via invoke()
-// Waterfall: LRCLIB (Primary) → NetEase (Secondary)
+// Waterfall: LRCLIB (Primary) → Kugou (High-Availability Secondary) → NetEase (Tertiary)
 // ────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -388,7 +538,19 @@ pub async fn fetch_lyrics_backend(
         return Ok(Some(result));
     }
 
-    // 2. Secondary: NetEase
+    // 2. Secondary: Kugou (High-Availability, CJK filtered in parser)
+    if let Some(result) = kugou_fetch(
+        &client,
+        &title,
+        &artist,
+        &normalized_title,
+        &normalized_artist,
+    ).await {
+        tracing::info!(provider = "kugou", title = %title, "Lyrics found via Kugou");
+        return Ok(Some(result));
+    }
+
+    // 3. Tertiary: NetEase
     if let Some(result) = netease_fetch(
         &client,
         &title,
