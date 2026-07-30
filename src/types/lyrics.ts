@@ -73,13 +73,12 @@ export interface CachedLyrics {
   provider: string;
   lyricsType: LyricsType;
   isInstrumental: boolean;
-  title: string;
-  artist: string;
-  duration: number;
-  /** Unambiguous schema version (not appVersion / lyricsVersion) */
-  schemaVersion: number;
-  /** Unix timestamp ms when this entry was cached */
-  cachedAt: number;
+  timestamp?: number;
+  title?: string;
+  artist?: string;
+  duration?: number;
+  schemaVersion?: number;
+  cachedAt?: number;
 }
 
 /** Raw LRCLIB API response shape. */
