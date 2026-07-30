@@ -1,6 +1,6 @@
 // Lyrica — Backend Lyrics Fetcher
-// Runs the QQ Music → LRCLIB → NetEase provider waterfall from the Rust backend.
-// Rejects corrupted LRC uploads where [ti:Title] tag mismatches requested song title.
+// Provider waterfall: LRCLIB (Primary) → NetEase (Secondary).
+// QQ Music is completely excluded as per user directive.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,6 @@ fn is_artist_match(target_artist: &str, candidate_artist: &str) -> bool {
 }
 
 /// Check if an LRC file header [ti:SongTitle] mismatches the requested song title.
-/// Prevents showing corrupted database uploads (e.g. "Vaya Con Dios" returned for "Tibok").
 fn is_lrc_title_mismatch(lrc_text: &str, requested_title: &str) -> bool {
     let req_clean = requested_title
         .to_lowercase()
@@ -91,137 +90,7 @@ pub struct FetchedLyrics {
 }
 
 // ────────────────────────────────────────────────────────────
-// QQ Music Provider
-// ────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct QqSearchResponse {
-    data: Option<QqSearchData>,
-}
-
-#[derive(Deserialize)]
-struct QqSearchData {
-    song: Option<QqSongList>,
-}
-
-#[derive(Deserialize)]
-struct QqSongList {
-    list: Option<Vec<QqSong>>,
-}
-
-#[derive(Deserialize)]
-struct QqSong {
-    songmid: String,
-    singer: Option<Vec<QqSinger>>,
-}
-
-#[derive(Deserialize)]
-struct QqSinger {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct QqLyricResponse {
-    lyric: Option<String>,
-}
-
-async fn qqmusic_fetch(
-    client: &Client,
-    raw_title: &str,
-    raw_artist: &str,
-    norm_title: &str,
-    norm_artist: &str,
-) -> Option<FetchedLyrics> {
-    let queries = [
-        format!("{raw_artist} {raw_title}"),
-        format!("{norm_artist} {norm_title}"),
-    ];
-
-    for query in &queries {
-        if query.trim().is_empty() {
-            continue;
-        }
-
-        let search_res = client
-            .get("https://c.y.qq.com/soso/fcgi-bin/client_search_cp")
-            .query(&[
-                ("w", query.as_str()),
-                ("format", "json"),
-                ("n", "5"),
-            ])
-            .send()
-            .await;
-
-        let songs = match search_res {
-            Ok(r) => match r.json::<QqSearchResponse>().await {
-                Ok(data) => data.data.and_then(|d| d.song).and_then(|s| s.list),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        };
-
-        let Some(song_list) = songs else { continue };
-
-        for song in song_list {
-            let is_artist = song.singer.as_ref().map_or(false, |singers| {
-                singers.iter().any(|sg| {
-                    is_artist_match(raw_artist, &sg.name) || is_artist_match(norm_artist, &sg.name)
-                })
-            });
-
-            if !is_artist {
-                continue;
-            }
-
-            let lyric_res = client
-                .get("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg")
-                .header("Referer", "https://y.qq.com/")
-                .query(&[
-                    ("songmid", song.songmid.as_str()),
-                    ("format", "json"),
-                    ("nobase64", "1"),
-                ])
-                .send()
-                .await;
-
-            let raw_lyric = match lyric_res {
-                Ok(r) => match r.json::<QqLyricResponse>().await {
-                    Ok(data) => data.lyric.filter(|s| !s.trim().is_empty() && s.contains('[')),
-                    Err(_) => None,
-                },
-                Err(_) => None,
-            };
-
-            if let Some(lrc) = raw_lyric {
-                // Reject corrupted database uploads where [ti:Title] tag mismatches
-                if is_lrc_title_mismatch(&lrc, raw_title) && is_lrc_title_mismatch(&lrc, norm_title) {
-                    continue;
-                }
-
-                let cleaned = lrc
-                    .replace("&apos;", "'")
-                    .replace("&quot;", "\"")
-                    .replace("&#32;", " ")
-                    .replace("&#38;", "&")
-                    .replace("&#10;", "\n")
-                    .replace("&#13;", "");
-
-                return Some(FetchedLyrics {
-                    synced_lrc: Some(cleaned),
-                    plain_lyrics: None,
-                    provider: "qqmusic".into(),
-                    lyrics_type: "synced".into(),
-                    is_instrumental: false,
-                });
-            }
-        }
-    }
-
-    None
-}
-
-// ────────────────────────────────────────────────────────────
-// LRCLIB Provider
+// LRCLIB Provider (Primary)
 // ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -347,7 +216,7 @@ async fn lrclib_fetch(
 }
 
 // ────────────────────────────────────────────────────────────
-// NetEase Provider
+// NetEase Provider (Secondary)
 // ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -491,6 +360,7 @@ async fn netease_fetch(
 
 // ────────────────────────────────────────────────────────────
 // Tauri command — called by useLyrics hook via invoke()
+// Waterfall: LRCLIB (Primary) → NetEase (Secondary)
 // ────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -504,19 +374,7 @@ pub async fn fetch_lyrics_backend(
 ) -> Result<Option<FetchedLyrics>, String> {
     let client = build_client().map_err(|e| e.to_string())?;
 
-    // 1. Try QQ Music first (with LRC title header verification)
-    if let Some(result) = qqmusic_fetch(
-        &client,
-        &title,
-        &artist,
-        &normalized_title,
-        &normalized_artist,
-    ).await {
-        tracing::info!(provider = "qqmusic", title = %title, "Lyrics found via QQ Music");
-        return Ok(Some(result));
-    }
-
-    // 2. Try LRCLIB second
+    // 1. Primary: LRCLIB
     if let Some(result) = lrclib_fetch(
         &client,
         &title,
@@ -530,7 +388,7 @@ pub async fn fetch_lyrics_backend(
         return Ok(Some(result));
     }
 
-    // 3. Fallback: NetEase
+    // 2. Secondary: NetEase
     if let Some(result) = netease_fetch(
         &client,
         &title,

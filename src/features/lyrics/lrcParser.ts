@@ -63,6 +63,11 @@ export function parseLrc(lrc: string | null | undefined): LyricLine[] {
       continue;
     }
 
+    // Skip Chinese CJK translation subtitle lines
+    if (text && /[\u4e00-\u9fa5]/.test(text)) {
+      continue;
+    }
+
     if (timestamps.length > 0) {
       for (const time of timestamps) {
         parsedLines.push({ time, text });
