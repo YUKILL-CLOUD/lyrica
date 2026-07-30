@@ -34,6 +34,7 @@ export const OverlayWindow: React.FC = () => {
     fontWeight,
     activeLyricColor,
     inactiveLyricColor,
+    activeLinesCount,
     opacity,
     bgOpacity,
     bgBlur,
@@ -213,6 +214,7 @@ export const OverlayWindow: React.FC = () => {
                 fontWeight={fontWeight}
                 activeLyricColor={activeLyricColor}
                 inactiveLyricColor={inactiveLyricColor}
+                activeLinesCount={activeLinesCount}
                 theme={theme}
               />
             </div>

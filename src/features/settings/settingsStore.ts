@@ -27,6 +27,7 @@ interface SettingsState {
   alwaysOnTop: boolean;
   clickThroughDefault: boolean;
   autoHideTimeout: number;
+  activeLinesCount: 1 | 2;
   lyricsProvider: string;
   debugMode: boolean;
 
@@ -38,6 +39,7 @@ interface SettingsState {
   setFontWeight: (weight: number) => void;
   setActiveLyricColor: (color: string) => void;
   setInactiveLyricColor: (color: string) => void;
+  setActiveLinesCount: (count: 1 | 2) => void;
   setOpacity: (opacity: number) => void;
   setBgOpacity: (bgOpacity: number) => void;
   setBgBlur: (blur: number) => void;
@@ -69,6 +71,7 @@ export const DEFAULT_SETTINGS = {
   fontWeight: 700,
   activeLyricColor: "#38bdf8",
   inactiveLyricColor: "rgba(255, 255, 255, 0.75)",
+  activeLinesCount: 2 as (1 | 2),
   opacity: 0.95,
   bgOpacity: 0.65,
   bgBlur: 20,
@@ -160,6 +163,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setInactiveLyricColor: (inactiveLyricColor) => {
     set({ inactiveLyricColor });
+    get().saveSettings();
+  },
+
+  setActiveLinesCount: (activeLinesCount) => {
+    set({ activeLinesCount });
     get().saveSettings();
   },
 

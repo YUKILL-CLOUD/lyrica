@@ -12,6 +12,7 @@ interface LyricsDisplayProps {
   activeLyricColor?: string;
   inactiveLyricColor?: string;
   theme?: string;
+  activeLinesCount?: 1 | 2;
 }
 
 function getLightAdaptiveActiveColor(hex: string): string {
@@ -43,8 +44,11 @@ export const LyricsDisplay: React.FC<LyricsDisplayProps> = ({
   activeLyricColor = "#38bdf8",
   inactiveLyricColor = "rgba(255, 255, 255, 0.75)",
   theme = "dark",
+  activeLinesCount = 2,
 }) => {
   const isLight = theme === "light";
+  // ... rest of checks remain same ...
+
 
   if (status === "loading") {
     return (
@@ -141,15 +145,23 @@ export const LyricsDisplay: React.FC<LyricsDisplayProps> = ({
             styleOpacity = 1.0;
             styleTextShadow = activeShadow;
           } else if (item.role === "active2") {
-            styleFontSize = Math.max(13, fontSize - 1);
-            styleFontWeight = Math.max(600, fontWeight - 100);
-            styleColor = effectiveActiveColor;
-            styleOpacity = 0.9;
-            styleTextShadow = activeShadow;
+            if (activeLinesCount === 2) {
+              styleFontSize = Math.max(13, fontSize - 1);
+              styleFontWeight = Math.max(600, fontWeight - 100);
+              styleColor = effectiveActiveColor;
+              styleOpacity = 0.9;
+              styleTextShadow = activeShadow;
+            } else {
+              styleFontSize = Math.max(12, fontSize - 3);
+              styleFontWeight = 400;
+              styleColor = effectiveInactiveColor;
+              styleOpacity = isLight ? 0.85 : 0.8;
+              styleTextShadow = inactiveShadow;
+            }
           }
 
-          let textContent = " ";
-          if (item.line) {
+          let textContent = "\u00A0";
+          if (item.line && item.line.text.trim().length > 0) {
             textContent = item.line.text;
           } else if (item.role === "active1" && !item.line) {
             textContent = "♪ ♪ ♪";
@@ -177,7 +189,7 @@ export const LyricsDisplay: React.FC<LyricsDisplayProps> = ({
                 color: { duration: 0.25 },
                 fontSize: { duration: 0.3, ease: [0.25, 1, 0.5, 1] },
               }}
-              className="text-center truncate w-full px-4"
+              className="text-center truncate w-full px-4 min-h-[1.4em] flex items-center justify-center"
               style={{
                 textShadow: styleTextShadow,
               }}

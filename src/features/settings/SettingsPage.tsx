@@ -53,6 +53,7 @@ export const SettingsPage: React.FC = () => {
     displayMode,
     fontSize,
     activeLyricColor,
+    activeLinesCount,
     opacity,
     bgOpacity,
     bgBlur,
@@ -70,6 +71,7 @@ export const SettingsPage: React.FC = () => {
     setDisplayMode,
     setFontSize,
     setActiveLyricColor,
+    setActiveLinesCount,
     setOpacity,
     setBgOpacity,
     setBgBlur,
@@ -331,6 +333,52 @@ export const SettingsPage: React.FC = () => {
                   <div className="text-xs font-bold">{m.label}</div>
                   <div className="text-[10px] text-neutral-500 mt-0.5">
                     {m.desc}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Active Lines Count (1 Line vs 2 Lines Dual) */}
+          <div
+            className={`p-4 rounded-xl border ${
+              isSettingsDark
+                ? "bg-[#121215] border-neutral-800/80"
+                : "bg-white border-slate-200 shadow-sm"
+            }`}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-sky-500" />
+              <label
+                className={`text-xs font-bold ${
+                  isSettingsDark ? "text-neutral-200" : "text-slate-800"
+                }`}
+              >
+                Active Lyric Highlight Lines
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { count: 1, label: "Single Active Line (1)", desc: "Highlight current line only" },
+                { count: 2, label: "Dual Active Lines (2)", desc: "Highlight current + next line" },
+              ].map((item) => (
+                <button
+                  key={item.count}
+                  onClick={() => {
+                    setActiveLinesCount(item.count as 1 | 2);
+                    triggerSaveNotice();
+                  }}
+                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
+                    activeLinesCount === item.count
+                      ? "border-sky-500 bg-sky-500/10 text-sky-400 shadow-sm ring-1 ring-sky-500/30"
+                      : isSettingsDark
+                      ? "border-neutral-800 bg-[#18181c] text-neutral-400 hover:border-neutral-700 hover:text-neutral-200"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                  }`}
+                >
+                  <div className="text-xs font-bold">{item.label}</div>
+                  <div className="text-[10px] text-neutral-500 mt-0.5">
+                    {item.desc}
                   </div>
                 </button>
               ))}
